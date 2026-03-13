@@ -1,0 +1,8 @@
+{
+    "hostname": "backup.example.com",
+    "username": "deploy_user",
+    "password": null,
+    "private_key_path": null,
+    "remote_path": "/backups/prod",
+    "source_directories": ["/var/www", "/etc/configs"]
+}
