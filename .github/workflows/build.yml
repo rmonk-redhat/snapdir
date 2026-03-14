@@ -60,6 +60,6 @@ jobs:
           files: |
             dist/snapdir-standalone-ubuntu-latest/snapdir
             dist/snapdir-standalone-macos-latest/snapdir
-            dist/snapdir-standalone--windows-latest/snapdir.exe
+            dist/snapdir-standalone-windows-latest/snapdir.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
