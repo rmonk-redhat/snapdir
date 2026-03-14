@@ -36,7 +36,7 @@ jobs:
 
     - name: Build with PyInstaller
       run: |
-        pyinstaller --onefile --clean snapdir.py
+        pyinstaller --name snapdir-${{ matrix.os }} --onefile --clean snapdir.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -60,8 +60,8 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            dist/snapdir-standalone-ubuntu-latest/snapdir
-            dist/snapdir-standalone-macos-latest/snapdir
-            dist/snapdir-standalone-windows-latest/snapdir.exe
+            dist/snapdir-standalone-ubuntu-latest/snapdir-ubuntu-latest
+            dist/snapdir-standalone-macos-latest/snapdir-macos-latest
+            dist/snapdir-standalone-windows-latest/snapdir-windows-latest.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
