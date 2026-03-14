@@ -3,6 +3,8 @@ name: Build Standalone Binaries
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'README.md'
     tags:
       - 'v*'
   workflow_dispatch:
