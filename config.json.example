@@ -4,5 +4,6 @@
     "password": null,
     "private_key_path": null,
     "remote_path": "/backups/prod",
-    "source_directories": ["/var/www", "/etc/configs"]
+    "source_directories": ["/var/www", "/etc/configs", "~/projects"],
+    "excluded_directories": ["~/projects/node_modules", "/var/www/tmp"]
 }
