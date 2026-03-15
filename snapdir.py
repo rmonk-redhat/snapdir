@@ -7,6 +7,9 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 import paramiko
+import hashlib
+import csv
+from datetime import datetime, timezone
 
 class GUIHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(self, client, hostname, key):
@@ -70,6 +73,7 @@ class BackupGUI:
         ttk.Label(creds_frame, text="Password:").grid(row=1, column=0, sticky="w")
         self.pass_entry = ttk.Entry(creds_frame, show="*")
         self.pass_entry.grid(row=1, column=1, sticky="ew", pady=5)
+        self.pass_entry.bind('<Return>', lambda e: self.start_backup_thread())
         creds_frame.columnconfigure(1, weight=1)
 
         # Progress Section
@@ -136,14 +140,17 @@ class BackupGUI:
                         self.proxy = proxy
                         self.callback = callback
                         self.total_written = 0
+                        self.hasher = hashlib.sha256()
                     def write(self, data):
                         self.proxy.write(data)
                         self.total_written += len(data)
+                        self.hasher.update(data)
                         self.callback(self.total_written, 0)
                     def close(self): self.proxy.close()
                     def flush(self): self.proxy.flush()
 
                 monitored_file = ProgressFile(remote_file, self.update_stats)
+                manifest = []
 
                 excludes = [os.path.abspath(os.path.expanduser(d)) for d in self.config.get('excluded_directories', [])]
 
@@ -152,21 +159,75 @@ class BackupGUI:
                         expanded_dir = os.path.abspath(os.path.expanduser(directory))
                         if os.path.exists(expanded_dir):
                             arc_base = os.path.basename(expanded_dir)
-                            
-                            def filter_tar(tarinfo, src_dir=expanded_dir, arc_name=arc_base):
-                                rel_path = os.path.relpath(tarinfo.name, arc_name)
-                                orig_path = os.path.abspath(os.path.join(src_dir, rel_path))
-                                for ex in excludes:
-                                    if orig_path == ex or orig_path.startswith(ex + os.sep):
-                                        return None
-                                return tarinfo
+                            for root, dirs, files in os.walk(expanded_dir):
+                                dirs[:] = [d for d in dirs if not any(
+                                    os.path.abspath(os.path.join(root, d)) == ex or os.path.abspath(os.path.join(root, d)).startswith(ex + os.sep)
+                                    for ex in excludes
+                                )]
+                                rel_root = os.path.relpath(root, expanded_dir)
+                                arc_root = os.path.join(arc_base, rel_root) if rel_root != '.' else arc_base
+                                arc_root = arc_root.replace('\\', '/')
+                                try:
+                                    ti = tar.gettarinfo(root, arcname=arc_root)
+                                    tar.addfile(ti)
+                                except Exception:
+                                    pass
                                 
-                            tar.add(expanded_dir, arcname=arc_base, filter=filter_tar)
+                                for file in files:
+                                    filepath = os.path.join(root, file)
+                                    arc_filepath = os.path.join(arc_root, file).replace('\\', '/')
+                                    
+                                    if os.path.islink(filepath) or not os.path.isfile(filepath):
+                                        try:
+                                            ti = tar.gettarinfo(filepath, arcname=arc_filepath)
+                                            tar.addfile(ti)
+                                        except Exception:
+                                            pass
+                                        continue
+                                        
+                                    dt = ''
+                                    try:
+                                        mtime = os.path.getmtime(filepath)
+                                        dt = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                                        ti = tar.gettarinfo(filepath, arcname=arc_filepath)
+                                        
+                                        class HashingFile:
+                                            def __init__(self, fp):
+                                                self.f = open(fp, 'rb')
+                                                self.hasher = hashlib.sha256()
+                                            def read(self, size=-1):
+                                                data = self.f.read(size)
+                                                if data: self.hasher.update(data)
+                                                return data
+                                            def close(self): self.f.close()
+                                            
+                                        hf = HashingFile(filepath)
+                                        tar.addfile(ti, fileobj=hf)
+                                        manifest.append(['archived', dt, filepath, hf.hasher.hexdigest()])
+                                        hf.close()
+                                    except Exception:
+                                        manifest.append(['failure', dt, filepath, ''])
+
+            # Write manifest CSV
+            manifest_basename = f"manifest_{socket.gethostname()}_{timestamp}.csv"
+            config_dir = os.path.dirname(os.path.abspath(self.config_path))
+            manifest_local_path = os.path.join(config_dir, manifest_basename)
+            
+            with open(manifest_local_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['status', 'last_modification_date', 'path', 'sha256_hash'])
+                writer.writerow(['', '', filename, monitored_file.hasher.hexdigest()])
+                for row in manifest:
+                    writer.writerow(row)
+
+            # Upload manifest
+            manifest_remote_path = os.path.join(self.config['remote_path'], manifest_basename).replace('\\', '/')
+            sftp.put(manifest_local_path, manifest_remote_path)
 
             self.last_update_time = 0
             self.update_stats(monitored_file.total_written, 0)
             self.progress_label.config(text="Backup Complete!", foreground="green")
-            messagebox.showinfo("Success", f"Archive streamed to {remote_full_path}")
+            messagebox.showinfo("Success", f"Archive streamed to {remote_full_path}\nManifest saved and uploaded.")
             
         except Exception as e:
             self.progress_label.config(text="Backup Failed", foreground="red")
