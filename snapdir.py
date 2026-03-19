@@ -14,16 +14,23 @@ import subprocess
 import platform
 
 def ping_host(hostname):
-    """Returns the ping response time in seconds, or float('inf') if failed."""
+    """Returns the average ping response time in seconds over 5 attempts, or float('inf') if failed."""
     param = '-n' if platform.system().lower() == 'windows' else '-c'
-    command = ['ping', param, '1', hostname]
-    try:
-        start = time.time()
-        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
-        if result.returncode == 0:
-            return time.time() - start
-    except Exception:
-        pass
+    count = 5
+    times = []
+    
+    for _ in range(count):
+        command = ['ping', param, '1', hostname]
+        try:
+            start = time.time()
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+            if result.returncode == 0:
+                times.append(time.time() - start)
+        except Exception:
+            pass
+            
+    if times:
+        return sum(times) / len(times)
     return float('inf')
 
 class GUIHostKeyPolicy(paramiko.MissingHostKeyPolicy):
