@@ -19,12 +19,16 @@ class GUIHostKeyPolicy(paramiko.MissingHostKeyPolicy):
               f"Are you sure you want to continue connecting?"
         if messagebox.askyesno("Unknown Host", msg):
             client.get_host_keys().add(hostname, key.get_name(), key)
-            if client._host_keys_filename is not None:
-                client.save_host_keys(client._host_keys_filename)
-            else:
-                known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
-                os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
-                client.save_host_keys(known_hosts_path)
+            try:
+                if client._host_keys_filename is not None:
+                    client.save_host_keys(client._host_keys_filename)
+                else:
+                    known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+                    os.makedirs(os.path.dirname(known_hosts_path), exist_ok=True)
+                    client.save_host_keys(known_hosts_path)
+            except Exception:
+                # Ignore errors when saving host keys
+                pass
             return
         raise paramiko.SSHException(f"Server {hostname} not found in known_hosts")
 
@@ -118,7 +122,11 @@ class BackupGUI:
             password = self.pass_entry.get()
             
             ssh = paramiko.SSHClient()
-            ssh.load_system_host_keys()
+            try:
+                ssh.load_system_host_keys()
+            except Exception:
+                # Ignore invalid entries in known_hosts instead of crashing
+                pass
             ssh.set_missing_host_key_policy(GUIHostKeyPolicy())
             ssh.connect(self.config['hostname'], self.config.get('port', 22), username, password)
             
