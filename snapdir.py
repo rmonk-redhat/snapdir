@@ -10,6 +10,21 @@ import paramiko
 import hashlib
 import csv
 from datetime import datetime, timezone
+import subprocess
+import platform
+
+def ping_host(hostname):
+    """Returns the ping response time in seconds, or float('inf') if failed."""
+    param = '-n' if platform.system().lower() == 'windows' else '-c'
+    command = ['ping', param, '1', hostname]
+    try:
+        start = time.time()
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        if result.returncode == 0:
+            return time.time() - start
+    except Exception:
+        pass
+    return float('inf')
 
 class GUIHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(self, client, hostname, key):
@@ -50,10 +65,26 @@ class BackupGUI:
         info_frame = ttk.LabelFrame(self.root, text="Configuration", padding=10)
         info_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(info_frame, text=f"Server: {self.config['hostname']}").pack(anchor="w")
-        ttk.Label(info_frame, text=f"Remote Path: {self.config['remote_path']}").pack(anchor="w")
+        server_frame = ttk.Frame(info_frame)
+        server_frame.pack(fill="x", pady=(0, 5))
+        ttk.Label(server_frame, text="Server:").pack(side="left")
+
+        servers = self.config.get('servers', [])
+        # Fallback for old config format
+        if not servers and 'hostname' in self.config:
+            servers = [self.config]
+            self.config['servers'] = servers
+
+        self.server_names = ["auto"] + [s.get('name', s.get('hostname', 'Unknown')) for s in servers]
+        self.server_combo = ttk.Combobox(server_frame, values=self.server_names, state="readonly")
+        self.server_combo.set("auto")
+        self.server_combo.pack(side="left", fill="x", expand=True, padx=(5, 0))
+
+        self.server_info_label = ttk.Label(info_frame, text="")
+        self.server_info_label.pack(anchor="w")
+        self.server_combo.bind("<<ComboboxSelected>>", self.on_server_selected)
         
-        sources = ", ".join([os.path.basename(os.path.expanduser(d)) for d in self.config['source_directories']])
+        sources = ", ".join([os.path.basename(os.path.expanduser(d)) for d in self.config.get('source_directories', [])])
         ttk.Label(info_frame, text=f"Sources: {sources}", wraplength=450).pack(anchor="w")
 
         excludes = self.config.get('excluded_directories', [])
@@ -90,6 +121,24 @@ class BackupGUI:
         # Action Button
         self.btn_start = ttk.Button(self.root, text="Start Snapshot", command=self.start_backup_thread)
         self.btn_start.pack(pady=20)
+        
+        # Initialize UI state based on selection
+        self.on_server_selected()
+
+    def on_server_selected(self, event=None):
+        selection = self.server_combo.get()
+        if selection == "auto":
+            self.server_info_label.config(text="Host: Multiple\nRemote Path: Default")
+            first_server = self.config.get('servers', [{}])[0]
+            if hasattr(self, 'user_entry'):
+                self.user_entry.delete(0, tk.END)
+                self.user_entry.insert(0, first_server.get('username', ''))
+        else:
+            server = next((s for s in self.config.get('servers', []) if s.get('name', s.get('hostname')) == selection), {})
+            self.server_info_label.config(text=f"Host: {server.get('hostname')}\nRemote Path: {server.get('remote_path')}")
+            if hasattr(self, 'user_entry'):
+                self.user_entry.delete(0, tk.END)
+                self.user_entry.insert(0, server.get('username', ''))
 
     def update_stats(self, transferred, total):
         """Callback for Paramiko to update the GUI progress"""
@@ -121,6 +170,36 @@ class BackupGUI:
             username = self.user_entry.get()
             password = self.pass_entry.get()
             
+            selection = self.server_combo.get()
+            servers = self.config.get('servers', [])
+            
+            if selection == "auto":
+                self.progress_label.config(text="Pinging servers to find fastest...", foreground="blue")
+                
+                best_server = None
+                best_time = float('inf')
+                for s in servers:
+                    hostname = s.get('hostname')
+                    if not hostname: continue
+                    t = ping_host(hostname)
+                    if t < best_time:
+                        best_time = t
+                        best_server = s
+                
+                if not best_server or best_time == float('inf'):
+                    raise Exception("All servers are unreachable or ping failed.")
+                    
+                target_server = best_server
+                self.progress_label.config(text=f"Selected {target_server.get('name', target_server.get('hostname'))} (auto)", foreground="blue")
+            else:
+                target_server = next((s for s in servers if s.get('name', s.get('hostname')) == selection), None)
+                if not target_server:
+                    raise Exception("Selected server not found in config.")
+
+            hostname = target_server.get('hostname')
+            port = target_server.get('port', 22)
+            remote_path = target_server.get('remote_path')
+            
             ssh = paramiko.SSHClient()
             try:
                 ssh.load_system_host_keys()
@@ -128,13 +207,13 @@ class BackupGUI:
                 # Ignore invalid entries in known_hosts instead of crashing
                 pass
             ssh.set_missing_host_key_policy(GUIHostKeyPolicy())
-            ssh.connect(self.config['hostname'], self.config.get('port', 22), username, password)
+            ssh.connect(hostname, port, username, password)
             
             sftp = ssh.open_sftp()
             
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             filename = f"backup_{socket.gethostname()}_{timestamp}.tar.gz"
-            remote_full_path = os.path.join(self.config['remote_path'], filename).replace('\\', '/')
+            remote_full_path = os.path.join(remote_path, filename).replace('\\', '/')
 
             self.start_time = time.time()
             
@@ -229,7 +308,7 @@ class BackupGUI:
                     writer.writerow(row)
 
             # Upload manifest
-            manifest_remote_path = os.path.join(self.config['remote_path'], manifest_basename).replace('\\', '/')
+            manifest_remote_path = os.path.join(remote_path, manifest_basename).replace('\\', '/')
             sftp.put(manifest_local_path, manifest_remote_path)
 
             self.last_update_time = 0

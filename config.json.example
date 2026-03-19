@@ -1,9 +1,24 @@
 {
-    "hostname": "backup.example.com",
-    "username": "deploy_user",
-    "password": null,
-    "private_key_path": null,
-    "remote_path": "/backups/prod",
+    "servers": [
+        {
+            "name": "Primary Backup Server",
+            "hostname": "backup1.example.com",
+            "port": 22,
+            "username": "deploy_user",
+            "password": null,
+            "private_key_path": null,
+            "remote_path": "/backups/prod"
+        },
+        {
+            "name": "Secondary Backup Server",
+            "hostname": "backup2.example.com",
+            "port": 22,
+            "username": "deploy_user",
+            "password": null,
+            "private_key_path": null,
+            "remote_path": "/backups/prod"
+        }
+    ],
     "source_directories": ["/var/www", "/etc/configs", "~/projects"],
     "excluded_directories": ["~/projects/node_modules", "/var/www/tmp"]
 }
